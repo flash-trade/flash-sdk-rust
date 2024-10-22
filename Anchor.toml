@@ -1,0 +1,20 @@
+[toolchain]
+channel = "nightly"
+
+[features]
+seeds = false
+skip-lint = false
+
+[programs.localnet]
+flash_read = "FLASH6Lo6h3iasJKWDs2F8TkW2UKf3s15C8PMGuVfgBn"
+flash_compute = "Fcmp5ZQ1wR5swZ87aRQyHfUiHYxrfrRVhCWrV2yYA6QG"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "Localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
