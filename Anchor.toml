@@ -4,9 +4,10 @@ channel = "nightly"
 [features]
 seeds = false
 skip-lint = false
+mainnet = true
 
 [programs.localnet]
-flash_read = "FLASH6Lo6h3iasJKWDs2F8TkW2UKf3s15C8PMGuVfgBn"
+flash_read = "FTN6rgbaaxwT8mpRuC55EFTwpHB3BwnHJ91Lqv4ZVCfW"
 flash_compute = "Fcmp5ZQ1wR5swZ87aRQyHfUiHYxrfrRVhCWrV2yYA6QG"
 
 [registry]

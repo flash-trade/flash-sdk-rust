@@ -5,8 +5,14 @@ use flash_read::states::*;
 use pyth_solana_receiver_sdk::price_update::PriceUpdateV2;
 use flash_read::math;
 
+
 declare_id!("Fcmp5ZQ1wR5swZ87aRQyHfUiHYxrfrRVhCWrV2yYA6QG");
+
+#[cfg(feature = "mainnet")]
 pub const FLASH_PROGRAM: Pubkey = pubkey!("FLASH6Lo6h3iasJKWDs2F8TkW2UKf3s15C8PMGuVfgBn");
+
+#[cfg(not(feature = "mainnet"))]
+pub const FLASH_PROGRAM: Pubkey = pubkey!("FTN6rgbaaxwT8mpRuC55EFTwpHB3BwnHJ91Lqv4ZVCfW");
 
 #[program]
 pub mod flash_compute {

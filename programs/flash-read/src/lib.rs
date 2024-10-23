@@ -6,7 +6,10 @@ pub mod math;
 pub mod error;
 pub use states::*;
 
+#[cfg(feature = "mainnet")]
 declare_id!("FLASH6Lo6h3iasJKWDs2F8TkW2UKf3s15C8PMGuVfgBn");
+#[cfg(not(feature = "mainnet"))]
+declare_id!("FTN6rgbaaxwT8mpRuC55EFTwpHB3BwnHJ91Lqv4ZVCfW");
 
 #[program]
 pub mod flash_read {
