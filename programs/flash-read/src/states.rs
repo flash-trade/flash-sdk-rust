@@ -210,6 +210,16 @@ pub struct Pool {
 
 impl Pool {
     pub const LEN: usize = 8 + 64 + std::mem::size_of::<Pool>();
+
+    pub fn get_fee_amount(&self, fee: u64, amount: u64) -> Result<u64> {
+        if fee == 0 || amount == 0 {
+            return Ok(0);
+        }
+        math::checked_as_u64(math::checked_ceil_div(
+            math::checked_mul(amount as u128, fee as u128)?,
+            Perpetuals::RATE_POWER,
+        )?)
+    }
 }
 
 #[derive(Clone, AnchorSerialize, AnchorDeserialize, Debug)]
@@ -342,6 +352,48 @@ pub struct Custody {
     pub token_account_bump: u8,
 
     pub size_factor_for_spread: u8,
+}
+
+impl Custody {
+    
+    pub const LEN: usize = 8 + std::mem::size_of::<Custody>();
+
+    pub fn get_lock_fee_usd(&self, position: &Position, curtime: i64) -> Result<u64> {
+        if position.locked_usd == 0 || self.is_virtual {
+            return Ok(0);
+        }
+
+        let cumulative_lock_fee = self.get_cumulative_lock_fee(curtime)?;
+
+        let position_lock_fee = if cumulative_lock_fee > position.cumulative_lock_fee_snapshot {
+            math::checked_sub(cumulative_lock_fee, position.cumulative_lock_fee_snapshot)?
+        } else {
+            return Ok(0);
+        };
+
+        math::checked_as_u64(math::checked_div(
+            math::checked_mul(position_lock_fee, position.locked_usd as u128)?,
+            Perpetuals::RATE_POWER,
+        )?)
+    }
+
+    pub fn get_cumulative_lock_fee(&self, curtime: i64) -> Result<u128> {
+        if curtime > self.borrow_rate_state.last_update {
+            let cumulative_lock_fee = math::checked_ceil_div(
+                math::checked_mul(
+                    math::checked_sub(curtime, self.borrow_rate_state.last_update)? as u128,
+                    self.borrow_rate_state.current_rate as u128,
+                )?,
+                3600,
+            )?;
+            math::checked_add(
+                self.borrow_rate_state.cumulative_lock_fee,
+                cumulative_lock_fee,
+            )
+        } else {
+            Ok(self.borrow_rate_state.cumulative_lock_fee)
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
