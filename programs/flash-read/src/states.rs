@@ -394,6 +394,38 @@ impl Custody {
             Ok(self.borrow_rate_state.cumulative_lock_fee)
         }
     }
+
+    pub fn get_trade_spread(
+        &self,
+        size_usd: u64,
+    ) -> Result<u64> {
+
+        if self.pricing.trade_spread_max == 0 {
+            return Ok(0);
+        }
+        
+        let slope = math::checked_div(
+            math::checked_mul(
+                math::checked_sub(
+                    self.pricing.trade_spread_max, 
+                    self.pricing.trade_spread_min
+                )?,
+                (Perpetuals::RATE_POWER + Perpetuals::BPS_POWER) as u64
+            )?,
+            self.pricing.max_position_locked_usd,
+        )?;
+        
+        Ok(
+            math::checked_add(
+                self.pricing.trade_spread_min,
+                math::checked_div(
+                    math::checked_mul(slope, size_usd)?,
+                    (Perpetuals::RATE_POWER + Perpetuals::BPS_POWER) as u64
+                )?
+            )?
+        )
+    }
+
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]

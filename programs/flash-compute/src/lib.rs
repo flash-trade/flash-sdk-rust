@@ -173,7 +173,7 @@ pub mod flash_compute {
         let pyth_price = Account::<PriceUpdateV2>::try_from(&ctx.accounts.collateral_oracle_account)?;
 
         let collateral_price = OraclePrice {
-            price: pyth_price.price_message.price as u64,
+            price: math::checked_sub(pyth_price.price_message.price as u64, pyth_price.price_message.conf)?,
             exponent: pyth_price.price_message.exponent as i32,
         };
     
