@@ -352,6 +352,11 @@ pub struct Custody {
     pub token_account_bump: u8,
 
     pub size_factor_for_spread: u8,
+    pub null: u8,
+    pub reserved_amount: u64, // TODO: Requires Realloc and shoulkd also be checked along assets
+    pub min_reserve_usd: u64,
+    pub limit_price_buffer_bps: u64, // BPS_DECIMALS
+    pub padding: [u8; 32],
 }
 
 impl Custody {
