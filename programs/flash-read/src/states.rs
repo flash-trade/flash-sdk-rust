@@ -2,6 +2,9 @@ use anchor_lang::prelude::*;
 use core::cmp::Ordering;
 use crate::{error::CompError, math};
 
+const ORACLE_EXPONENT_SCALE: i32 = -9;
+const ORACLE_PRICE_SCALE: u64 = 1_000_000_000;
+const ORACLE_MAX_PRICE: u64 = (1 << 28) - 1; // 268435455
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
 pub struct Permissions {
@@ -122,6 +125,22 @@ impl OraclePrice {
         )
     }
 
+    /// Returns price with mantissa normalized to be less than ORACLE_MAX_PRICE
+    pub fn normalize(&self) -> Result<OraclePrice> {
+        let mut p = self.price;
+        let mut e = self.exponent;
+
+        while p > ORACLE_MAX_PRICE {
+            p = math::checked_div(p, 10)?;
+            e = math::checked_add(e, 1)?;
+        }
+
+        Ok(OraclePrice {
+            price: p,
+            exponent: e,
+        })
+    }
+
     pub fn checked_sub(&self, other: &OraclePrice) -> Result<OraclePrice> {
         require!(
             self.exponent == other.exponent,
@@ -131,6 +150,22 @@ impl OraclePrice {
             math::checked_sub(self.price, other.price)?, 
             self.exponent
         ))
+    }
+
+    pub fn checked_div(&self, other: &OraclePrice) -> Result<OraclePrice> {
+        let base = self.normalize()?;
+        let other = other.normalize()?;
+
+        Ok(OraclePrice {
+            price: math::checked_div(
+                math::checked_mul(base.price, ORACLE_PRICE_SCALE)?,
+                other.price,
+            )?,
+            exponent: math::checked_sub(
+                math::checked_add(base.exponent, ORACLE_EXPONENT_SCALE)?,
+                other.exponent,
+            )?,
+        })
     }
 
     pub fn scale_to_exponent(&self, target_exponent: i32) -> Result<OraclePrice> {
@@ -150,6 +185,16 @@ impl OraclePrice {
             })
         }
     }
+
+    fn get_divergence(price: OraclePrice, reference: OraclePrice) -> Result<u64> {
+
+        let factor = if price > reference {
+            price.checked_sub(&reference)?.checked_div(&reference)?
+        } else {
+            reference.checked_sub(&price)?.checked_div(&reference)?
+        };
+        Ok((factor.scale_to_exponent(-(Perpetuals::BPS_DECIMALS as i32))?.price) as u64)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
@@ -159,7 +204,8 @@ pub struct OracleParams {
     pub oracle_type: OracleType,
     pub max_divergence_bps: u64,
     pub max_conf_bps: u64,
-    pub max_price_age_sec: u64, 
+    pub max_price_age_sec: u32,
+    pub max_backup_age_sec: u32, 
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
@@ -255,7 +301,7 @@ pub struct Fees {
     pub remove_liquidity: RatioFees,
     pub open_position: u64,
     pub close_position: u64,
-    pub remove_collateral: u64,
+    pub volatility: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
@@ -353,7 +399,7 @@ pub struct Custody {
 
     pub size_factor_for_spread: u8,
     pub null: u8,
-    pub reserved_amount: u64, // TODO: Requires Realloc and shoulkd also be checked along assets
+    pub reserved_amount: u64,
     pub min_reserve_usd: u64,
     pub limit_price_buffer_bps: u64, // BPS_DECIMALS
     pub padding: [u8; 32],
@@ -550,4 +596,11 @@ pub struct StakeStats {
     pub active_amount: u64,
     pub pending_deactivation: u64,
     pub deactivated_amount: u64,
+}
+
+#[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
+pub struct NewPositionPricesAndFee {
+    pub entry_price: OraclePrice,
+    pub entry_fee_amount: u64,
+    pub vb_fee_amount: u64,
 }
