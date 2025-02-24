@@ -76,6 +76,16 @@ impl Default for OracleType {
     }
 }
 
+#[account]
+#[derive(Copy, Default, Debug)]
+pub struct CustomOracle {
+    pub price: u64,
+    pub expo: i32,
+    pub conf: u64,
+    pub ema: u64,
+    pub publish_time: i64,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
 pub struct OraclePrice {
     pub price: u64,
@@ -122,6 +132,20 @@ impl OraclePrice {
             self.price,
             self.exponent,
             -(Perpetuals::USD_DECIMALS as i32),
+        )
+    }
+
+    // Converts USD amount with implied USD_DECIMALS decimals to token amount
+    pub fn get_token_amount(&self, asset_amount_usd: u64, token_decimals: u8) -> Result<u64> {
+        if asset_amount_usd == 0 || self.price == 0 {
+            return Ok(0);
+        }
+        math::checked_decimal_div(
+            asset_amount_usd,
+            -(Perpetuals::USD_DECIMALS as i32),
+            self.price,
+            self.exponent,
+            -(token_decimals as i32),
         )
     }
 
@@ -195,6 +219,81 @@ impl OraclePrice {
         };
         Ok((factor.scale_to_exponent(-(Perpetuals::BPS_DECIMALS as i32))?.price) as u64)
     }
+
+    fn get_int_oracle_price(
+        custom_price_info: &AccountInfo,
+    ) -> Result<(OraclePrice, OraclePrice, u64, i64)> {
+        let oracle_acc = Account::<CustomOracle>::try_from(custom_price_info)?;
+        Ok((
+            OraclePrice::new(oracle_acc.price, oracle_acc.expo),
+            OraclePrice::new(oracle_acc.ema, oracle_acc.expo),
+            oracle_acc.conf,
+            oracle_acc.publish_time,
+        ))
+    }
+
+    // Returns (min_oracle_price, max_oracle_price, volatility_flag)
+    pub fn fetch_from_oracle(
+        int_oracle_account: &AccountInfo, 
+        oracle_params: &OracleParams, // from custody.oracle
+        current_time: i64,
+        is_stable: bool,
+    ) -> Result<(
+        OraclePrice,
+        OraclePrice,
+        bool,
+    )> {
+        let (
+            oracle_price,
+            oracle_ema_price,
+            oracle_conf,
+            oracle_timestamp,
+        ) = Self::get_int_oracle_price(int_oracle_account)?;
+
+        let price_age_sec = current_time.saturating_sub(oracle_timestamp);
+        if price_age_sec > oracle_params.max_price_age_sec as i64 {
+            return err!(CompError::InvalidOraclePrice);
+        }
+
+        let divergence_bps = if is_stable {
+            let one_usd = OraclePrice::new(
+                math::checked_pow(10_u64, oracle_price.exponent.abs() as usize)?,
+                oracle_price.exponent,
+            );
+            Self::get_divergence(oracle_price, one_usd)?
+        } else {
+            Self::get_divergence(oracle_price, oracle_ema_price)?
+        };
+
+        if divergence_bps < oracle_params.max_divergence_bps {
+            Ok((
+                oracle_price,
+                oracle_price,
+                false,
+            ))
+        } else {
+            let conf_bps = math::checked_div(
+                math::checked_mul(oracle_conf as u128, Perpetuals::BPS_POWER)?,
+                oracle_price.price as u128,
+            )?;
+
+            if conf_bps < oracle_params.max_conf_bps as u128 {
+                Ok((
+                    OraclePrice::new(
+                        math::checked_sub(oracle_price.price, oracle_conf)?,
+                        oracle_price.exponent,
+                    ),
+                    OraclePrice::new(
+                        math::checked_add(oracle_price.price, oracle_conf)?,
+                        oracle_price.exponent,
+                    ),
+                    true,
+                ))
+            } else {
+                err!(CompError::InvalidOraclePrice)
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, AnchorSerialize, AnchorDeserialize, Default, Debug)]
@@ -265,6 +364,81 @@ impl Pool {
             math::checked_mul(amount as u128, fee as u128)?,
             Perpetuals::RATE_POWER,
         )?)
+    }
+
+    fn get_price(
+        &self,
+        min_price: &OraclePrice,
+        max_price: &OraclePrice,
+        side: Side,
+        spread: u64,
+    ) -> Result<OraclePrice> {
+        if side == Side::Long {
+            Ok(OraclePrice {
+                price: math::checked_add(
+                    max_price.price,
+                    math::checked_decimal_ceil_mul(
+                        max_price.price,
+                        max_price.exponent,
+                        spread,
+                        -(Perpetuals::USD_DECIMALS as i32), // Spread is in 100th of a bip so we use USD decimals
+                        max_price.exponent,
+                    )?,
+                )?,
+                exponent: max_price.exponent,
+            })
+        } else {
+            let spread = math::checked_decimal_mul(
+                min_price.price,
+                min_price.exponent,
+                spread,
+                -(Perpetuals::USD_DECIMALS as i32),
+                min_price.exponent,
+            )?;
+
+            let price = if spread < min_price.price {
+                math::checked_sub(min_price.price, spread)?
+            } else {
+                0
+            };
+
+            Ok(OraclePrice {
+                price,
+                exponent: min_price.exponent,
+            })
+        }
+    }
+
+    pub fn get_entry_price(
+        &self,
+        min_price: &OraclePrice,
+        max_price: &OraclePrice,
+        side: Side,
+        spread: u64, // from: target_custody.get_trade_spread(position.size_usd)
+    ) -> Result<OraclePrice> {
+        let price = self.get_price(min_price, max_price, side, spread)?;
+        Ok(price)
+    }
+
+    pub fn get_exit_price(
+        &self,
+        min_price: &OraclePrice,
+        max_price: &OraclePrice,
+        side: Side,
+        spread: u64, // from: target_custody.get_trade_spread(position.size_usd)
+    ) -> Result<OraclePrice> {
+        let price = self.get_price(
+            min_price,
+            max_price,
+            if side == Side::Long {
+                Side::Short
+            } else {
+                Side::Long
+            },
+            spread,
+        )?;
+
+        Ok(price)
     }
 }
 

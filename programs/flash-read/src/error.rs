@@ -8,4 +8,6 @@ pub enum CompError {
     MathOverflow,
     #[msg("Exponent mismatch in arithmetic operation")]
     ExponentMismatch,
+    #[msg("Invalid oracle price")]
+    InvalidOraclePrice,
 }
