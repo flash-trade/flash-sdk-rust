@@ -176,6 +176,13 @@ pub mod flash_compute {
             price: math::checked_sub(pyth_price.price_message.price as u64, pyth_price.price_message.conf)?,
             exponent: pyth_price.price_message.exponent as i32,
         };
+
+        let pyth_price = Account::<PriceUpdateV2>::try_from(&ctx.accounts.target_oracle_account)?;
+
+        let target_price = OraclePrice {
+            price: math::checked_sub(pyth_price.price_message.price as u64, pyth_price.price_message.conf)?,
+            exponent: pyth_price.price_message.exponent as i32,
+        };
     
         let liabilities_usd = math::checked_add(
             math::checked_add(
@@ -192,6 +199,18 @@ pub mod flash_compute {
         )?;
 
         if market.correlation && market.side == Side::Long {
+            let collateral_amount = if market.target_custody_id == market.collateral_custody_id {
+                position.collateral_amount
+            } else {
+                let swap_price = collateral_price.checked_div(&target_price)?;
+                math::checked_decimal_mul(
+                    position.collateral_amount,
+                    -(collateral_custody.decimals as i32),
+                    swap_price.price,
+                    swap_price.exponent,
+                    -(target_custody.decimals as i32),
+                )?
+            };
                 // For Correlated Long Markets, if notional size value is assumed to correspond to liabilities then current size vlaue corresponds to assets 
                 // Liq Price = (size_usd + liabilities_usd) / (size_amount + collateral_amount) subject to constraints
                 let liq_price = OraclePrice::new(
@@ -200,7 +219,7 @@ pub mod flash_compute {
                             math::checked_add(position.size_usd, liabilities_usd)? as u128,
                             math::checked_pow(10_u128, (position.size_decimals + 3) as usize)?, // USD to Rate decimals for granularity 
                         )?,
-                        math::checked_add(position.size_amount, position.collateral_amount)? as u128,
+                        math::checked_add(position.size_amount, collateral_amount)? as u128,
                     )?)?,
                     -(Perpetuals::RATE_DECIMALS as i32),
                 );
@@ -326,6 +345,12 @@ pub struct GetLiquidationPrice<'info> {
         bump = target_custody.bump
     )]
     pub target_custody: Box<Account<'info, Custody>>,
+
+    /// CHECK: oracle account for the target token
+    #[account(
+        constraint = target_oracle_account.key() == target_custody.oracle.ext_oracle_account
+    )]
+    pub target_oracle_account: AccountInfo<'info>,
 
     #[account(
         seeds = [b"custody",
