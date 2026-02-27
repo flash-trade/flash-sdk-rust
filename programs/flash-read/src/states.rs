@@ -738,7 +738,7 @@ impl Market {
                 size_usd: self.collective_position.size_usd,
                 locked_amount: self.collective_position.locked_amount,
                 locked_usd: self.collective_position.locked_usd,
-                collateral_amount: self.collective_position.collateral_amount,
+                collateral_usd: self.collective_position.collateral_usd,
                 unsettled_fees_usd: self.collective_position.unsettled_fee_usd,
                 cumulative_lock_fee_snapshot: self.collective_position.cumulative_lock_fee_snapshot,
                 size_decimals: self.collective_position.size_decimals,
